@@ -1000,6 +1000,7 @@ def main():
     threading.Thread(target=run_web, daemon=True).start()
 
     application = Application.builder().token(TOKEN).build()
+    print("TELEGRAM APPLICATION СОЗДАН", flush=True)
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback))
