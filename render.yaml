@@ -1,0 +1,18 @@
+# Конфигурация для Render (Blueprint).
+# Главное: запускаем именно bot.py, а не gunicorn app:app по умолчанию.
+
+services:
+  - type: web
+    name: peterburg-quest
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false          # значение вводится в панели Render, в git не попадает
+      - key: PYTHON_VERSION
+        value: "3.12.6"

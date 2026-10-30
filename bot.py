@@ -1,5 +1,7 @@
+import logging
 import os
 import threading
+
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -8,6 +10,16 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
+
+# ============================================================
+# ЛОГИ
+# ============================================================
+
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    level=logging.INFO,
+)
+log = logging.getLogger("quest")
 
 # ============================================================
 # НАСТРОЙКИ
@@ -30,9 +42,16 @@ def home():
     return "Петербургский квест работает! 🟡"
 
 
+@app.route("/health")
+def health():
+    # Render дёргает этот адрес для проверки, что сервис жив
+    return "ok", 200
+
+
 def run_web():
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.getenv("PORT", "10000"))
+    log.info("Веб-сервер слушает порт %s", port)
+    app.run(host="0.0.0.0", port=port, threaded=True, use_reloader=False)
 
 
 # ============================================================
@@ -996,19 +1015,23 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 
 def main():
+    log.info("Старт бота, файл %s", __file__)
+
     # Веб-сервер запускаем отдельным потоком
     threading.Thread(target=run_web, daemon=True).start()
 
     application = Application.builder().token(TOKEN).build()
-    print("TELEGRAM APPLICATION СОЗДАН", flush=True)
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback))
 
-    print("Бот запущен!")
+    log.info("Бот запущен, начинаю приём сообщений")
 
     application.run_polling(
-        allowed_updates=Update.ALL_TYPES
+        allowed_updates=Update.ALL_TYPES,
+        # не разгребает старое, если бот лежал: иначе после пробуждения
+        # прилетает пачка старых нажатий
+        drop_pending_updates=True,
     )
 
 
