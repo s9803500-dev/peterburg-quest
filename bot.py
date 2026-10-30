@@ -97,6 +97,32 @@ def buttons(items):
     )
 
 
+# Последний заданный вопрос в каждом чате: chat_id -> (текст, клавиатура).
+# Нужен, чтобы на неверный ответ повторять только вопрос, а не весь блок целиком.
+LAST_QUESTION = {}
+
+
+def question_only(text):
+    """Оставляет от текста блока только строку вопроса (всё, что начинается с ❓)."""
+    idx = text.find("❓")
+    return text[idx:].strip() if idx >= 0 else text.strip()
+
+
+async def ask(query, text, reply_markup):
+    """Отправляет вопрос и запоминает его на случай неверного ответа."""
+    LAST_QUESTION[query.message.chat_id] = (text, reply_markup)
+    await query.message.reply_text(text, reply_markup=reply_markup)
+
+
+async def ask_again(query):
+    """Повторяет только вопрос (без вступления и правил) с теми же кнопками."""
+    saved = LAST_QUESTION.get(query.message.chat_id)
+    if not saved:
+        return
+    text, reply_markup = saved
+    await query.message.reply_text(question_only(text), reply_markup=reply_markup)
+
+
 async def send_route(query, text, map_key, arrived_callback):
     keyboard = [
         [InlineKeyboardButton("🗺 Открыть маршрут", url=MAPS[map_key])],
@@ -156,9 +182,7 @@ async def point1(query):
 и не применяем заклинание «А вы придержите».
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("🟢 Двор открыт", "yard_open"),
             ("🔒 Магия не сработала", "yard_closed"),
         ]),
@@ -176,9 +200,7 @@ async def yard_open(query):
 ❓ Какого цвета дорожка решила заменить вам навигатор?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("🟡 Жёлтая — всё по канону", "yellow"),
             ("🟢 Зелёная — мы же в Изумрудном", "green"),
             ("🩶 Серая — это всё-таки Петербург", "grey"),
@@ -199,9 +221,7 @@ async def yard_closed(query):
 по Изумрудному городу в сторону дома № 2.
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("🏠 № 2 — начать с финиша", "house2"),
             ("🏠 № 6 — ворваться с середины", "house6"),
             ("🏠 № 8 — идти по сюжету", "house8"),
@@ -247,9 +267,7 @@ async def point2(query):
 Не доверяйте названию.
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("3️⃣ Мало", "five_3"),
             ("4️⃣ Похоже", "five_4"),
             ("5️⃣ Логично", "five_5"),
@@ -298,9 +316,7 @@ async def point3(query):
 ❓ Какая станция находится не на Сенной площади?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("Сенная", "metro_sennaya"),
             ("Садовая", "metro_sadovaya"),
             ("Спасская", "metro_spasskaya"),
@@ -348,9 +364,7 @@ async def point4(query):
 ❓ Сколько больших сов охраняют дом?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("2 🦉", "owls2"),
             ("3 🦉", "owls3"),
             ("4 🦉", "owls4"),
@@ -398,9 +412,7 @@ async def point5(query):
 ❓ Сколько мостов вы насчитали вместе с Пикаловым?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("6️⃣", "bridges6"),
             ("7️⃣", "bridges7"),
             ("8️⃣", "bridges8"),
@@ -449,9 +461,7 @@ async def point6(query):
 Сколько здесь львов?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("2 🦁", "lions2"),
             ("4 🦁", "lions4"),
             ("6 🦁", "lions6"),
@@ -503,9 +513,7 @@ async def point7(query):
 ❓ Каким годом подписана самая высокая отметка?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("1824", "flood1824"),
             ("1924", "flood1924"),
             ("1967", "flood1967"),
@@ -555,9 +563,7 @@ async def point8(query):
 Что вы видите?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("🚪 Нашёл", "door_found"),
             ("🌳 Исчезла", "door_gone"),
         ]),
@@ -572,9 +578,7 @@ async def door_found(query):
 ❓ Кто выглядывает из окошка?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("Гном и кот", "gnome_cat"),
             ("Фея и пёс", "fairy_dog"),
             ("Две мыши", "two_mice"),
@@ -595,9 +599,7 @@ async def door_gone(query):
 Что находится наверху?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("Крест", "cross"),
             ("Кораблик", "ship"),
             ("Филин", "owl"),
@@ -650,9 +652,7 @@ async def point9(query):
 Какая улица проходит по центру трезубца?
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("Невский", "trident_nevsky"),
             ("Гороховая", "trident_goroh"),
             ("Вознесенский", "trident_vos"),
@@ -684,9 +684,7 @@ async def finish(query):
 Он не обидится — просто запомнит. 😉
 """
 
-    await query.message.reply_text(
-        text,
-        reply_markup=buttons([
+    await ask(query, text, reply_markup=buttons([
             ("⭐", "rating1"),
             ("⭐⭐", "rating2"),
             ("⭐⭐⭐", "rating3"),
@@ -730,25 +728,25 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Почти логично, но зелёный здесь город, а не дорожная разметка. Посмотрите под ноги ещё раз."
         )
-        await yard_open(query)
+        await ask_again(query)
 
     elif data == "grey":
         await query.message.reply_text(
             "Очень по-петербургски, но сегодня город решил удивить. Ищите цвет повеселее."
         )
-        await yard_open(query)
+        await ask_again(query)
 
     elif data == "house2":
         await query.message.reply_text(
             "Это конец маршрута по двору. Начинать с конца можно, но тогда Элли запутается раньше вас."
         )
-        await yard_closed(query)
+        await ask_again(query)
 
     elif data == "house6":
         await query.message.reply_text(
             "Это середина. Вы почти телепортировались, но сегодня идём без чит-кодов."
         )
-        await yard_closed(query)
+        await ask_again(query)
 
     elif data == "house8":
         await query.message.reply_text(
@@ -782,13 +780,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Три — это уже трезубец. Не торопитесь: тайные линии и заговоры будут ближе к финалу."
         )
-        await point2(query)
+        await ask_again(query)
 
     elif data == "five_5":
         await query.message.reply_text(
             "Название вас подловило. Углов пять, а улиц и проспектов — четыре. Здесь даже перекрёсток считает с хитрецой."
         )
-        await point2(query)
+        await ask_again(query)
 
     # -------- Точка 3 --------
 
@@ -802,7 +800,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "metro_spasskaya": "«Спасская» тоже здесь. Возможно, спасает тех, кто слишком долго выбирал перекус.",
         }
         await query.message.reply_text(messages[data])
-        await point3(query)
+        await ask_again(query)
 
     elif data == "metro_sportivnaya":
         await query.message.reply_text(
@@ -831,13 +829,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Одну сову вы недосчитали. Посмотрите на дом с обеих сторон — они работают посменно, но сегодня все на месте."
         )
-        await point4(query)
+        await ask_again(query)
 
     elif data == "owls4":
         await query.message.reply_text(
             "Четвёртая, возможно, ушла согласовывать перепланировку. На крыше их три — проверьте оба фасада."
         )
-        await point4(query)
+        await ask_again(query)
 
     # -------- Точка 5 --------
 
@@ -861,13 +859,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Вы забыли Пикалов мост. Он скромно лежит под ногами и делает вид, что не участвует."
         )
-        await point5(query)
+        await ask_again(query)
 
     elif data == "bridges8":
         await query.message.reply_text(
             "Восемь — щедро. Похоже, один мост получил второй голос. Повернитесь ещё раз, но помедленнее."
         )
-        await point5(query)
+        await ask_again(query)
 
     elif data == "bridges_unknown":
         await query.message.reply_text(
@@ -890,13 +888,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Вы посчитали только одну сторону. Львы работают по обоим берегам — обойдите мост взглядом ещё раз."
         )
-        await point6(query)
+        await ask_again(query)
 
     elif data == "lions6":
         await query.message.reply_text(
             "Шесть — это уже расширенный штат охраны. На мосту их четыре."
         )
-        await point6(query)
+        await ask_again(query)
 
     # -------- Точка 7 --------
 
@@ -913,13 +911,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Почти: наводнение было огромным, но рекорд устоял. Ищите отметку выше."
         )
-        await point7(query)
+        await ask_again(query)
 
     elif data == "flood1967":
         await query.message.reply_text(
             "В этот раз Нептун действовал скромнее. Посмотрите на самый верх шкалы."
         )
-        await point7(query)
+        await ask_again(query)
 
     # -------- Точка 8 --------
 
@@ -942,13 +940,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Нет, здесь более серьёзная управляющая компания. Присмотритесь к окошку ещё раз."
         )
-        await door_found(query)
+        await ask_again(query)
 
     elif data == "two_mice":
         await query.message.reply_text(
             "Мыши решили остаться за кулисами. Присмотритесь ещё раз: один жилец явно сказочный, второй куда более пушистый."
         )
-        await door_found(query)
+        await ask_again(query)
 
     elif data == "cross":
         await query.message.reply_text(
@@ -960,13 +958,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Кораблик будет на Адмиралтействе. Не торопите финал."
         )
-        await door_gone(query)
+        await ask_again(query)
 
     elif data == "owl":
         await query.message.reply_text(
             "Филины остались на крыше городских учреждений. Этот сопровождает нас мысленно."
         )
-        await door_gone(query)
+        await ask_again(query)
 
     # -------- Точка 9 --------
 
@@ -983,13 +981,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Невский решил перетянуть всё внимание на себя, но он боковой луч. Центр ищите прямо перед собой."
         )
-        await point9(query)
+        await ask_again(query)
 
     elif data == "trident_vos":
         await query.message.reply_text(
             "Вознесенский тоже участвует в заговоре, но держится сбоку. Центральный луч — другой."
         )
-        await point9(query)
+        await ask_again(query)
 
     # -------- ОЦЕНКА --------
 
