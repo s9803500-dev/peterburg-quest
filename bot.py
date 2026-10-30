@@ -1,6 +1,8 @@
 import logging
 import os
 import threading
+import time
+import urllib.request
 
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -1014,25 +1016,55 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ЗАПУСК
 # ============================================================
 
-def main():
-    log.info("Старт бота, файл %s", __file__)
-
-    # Веб-сервер запускаем отдельным потоком
-    threading.Thread(target=run_web, daemon=True).start()
-
+def build_telegram_app():
     application = Application.builder().token(TOKEN).build()
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback))
+    return application
 
+
+def run_bot():
+    application = build_telegram_app()
     log.info("Бот запущен, начинаю приём сообщений")
-
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         # не разгребает старое, если бот лежал: иначе после пробуждения
         # прилетает пачка старых нажатий
         drop_pending_updates=True,
     )
+
+
+def keep_alive():
+    """
+    Раз в 10 минут дёргаем свой же публичный адрес.
+    Render усыпляет бесплатный сервис после 15 минут без входящих
+    запросов — вот эти запросы его и бодрят.
+    """
+    url = os.getenv("RENDER_EXTERNAL_URL")
+    if not url:
+        log.info("RENDER_EXTERNAL_URL не задан, авто-пинг выключен")
+        return
+
+    target = url.rstrip("/") + "/health"
+    log.info("Авто-пинг включён: %s", target)
+
+    while True:
+        try:
+            with urllib.request.urlopen(target, timeout=30) as resp:
+                log.info("Авто-пинг: %s", resp.status)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Авто-пинг не удался: %s", exc)
+        time.sleep(600)
+
+
+def main():
+    log.info("Старт бота, файл %s", __file__)
+
+    # Веб-сервер запускаем отдельным потоком
+    threading.Thread(target=run_web, daemon=True).start()
+    threading.Thread(target=keep_alive, daemon=True).start()
+
+    run_bot()
 
 
 if __name__ == "__main__":
