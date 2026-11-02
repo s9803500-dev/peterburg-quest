@@ -3,14 +3,17 @@ import os
 import threading
 import time
 import urllib.request
+from datetime import datetime
 
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
-    CommandHandler,
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 # ============================================================
@@ -31,6 +34,11 @@ TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
     raise RuntimeError("Не найден BOT_TOKEN")
+
+# Кому присылать оценки. Можно несколько через запятую: "123456789,987654321".
+ADMIN_CHAT_IDS = [
+    chunk.strip() for chunk in os.getenv("ADMIN_CHAT_ID", "").split(",") if chunk.strip()
+]
 
 # ------------------------------------------------------------
 # Маленький веб-сервер для Render
@@ -101,6 +109,12 @@ def buttons(items):
 # Нужен, чтобы на неверный ответ повторять только вопрос, а не весь блок целиком.
 LAST_QUESTION = {}
 
+# Когда игру начали: chat_id -> datetime. Нужно для времени прохождения.
+START_TIME = {}
+
+# Флаг «сейчас мы просто повторяем вопрос», а не задаём новый.
+REPEAT_MODE = [False]
+
 
 def question_only(text):
     """Оставляет от текста блока только строку вопроса (всё, что начинается с ❓)."""
@@ -108,19 +122,74 @@ def question_only(text):
     return text[idx:].strip() if idx >= 0 else text.strip()
 
 
+def elapsed_text(chat_id):
+    """Сколько идёт прогулка: '3 ч 12 мин' или '' если время неизвестно."""
+    started = START_TIME.get(chat_id)
+    if not started:
+        return ""
+    minutes = int((datetime.now() - started).total_seconds() // 60)
+    if minutes < 1:
+        return "меньше минуты"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} ч {minutes} мин" if hours else f"{minutes} мин"
+
+
 async def ask(query, text, reply_markup):
     """Отправляет вопрос и запоминает его на случай неверного ответа."""
+    if REPEAT_MODE[0]:
+        await query.message.reply_text(question_only(text), reply_markup=reply_markup)
+        return
     LAST_QUESTION[query.message.chat_id] = (text, reply_markup)
     await query.message.reply_text(text, reply_markup=reply_markup)
 
 
-async def ask_again(query):
-    """Повторяет только вопрос (без вступления и правил) с теми же кнопками."""
+async def ask_again(query, data):
+    """
+    Повторяет только вопрос (без вступления и правил) с теми же кнопками.
+
+    Обычно берёт последний заданный вопрос из памяти. Если бота перезапустили
+    и память пуста, восстанавливает вопрос по нажатой кнопке.
+    """
     saved = LAST_QUESTION.get(query.message.chat_id)
-    if not saved:
+    if saved:
+        text, reply_markup = saved
+        await query.message.reply_text(question_only(text), reply_markup=reply_markup)
         return
-    text, reply_markup = saved
-    await query.message.reply_text(question_only(text), reply_markup=reply_markup)
+
+    step = RETRY_BY_DATA.get(data)
+    if not step:
+        return
+    REPEAT_MODE[0] = True
+    try:
+        await step(query)
+    finally:
+        REPEAT_MODE[0] = False
+
+
+async def notify_admins(context, query, stars):
+    """Отправляет оценку всем, кто указан в ADMIN_CHAT_ID."""
+    user = query.from_user
+    who = f"@{user.username}" if user.username else user.full_name
+    passed = elapsed_text(query.message.chat_id)
+
+    lines = [
+        f"⭐ Новая оценка квеста: {stars} из 5",
+        f"Кто: {who} (id {user.id})",
+        f"Когда: {datetime.now():%d.%m.%Y %H:%M}",
+    ]
+    if passed:
+        lines.append(f"Время прохождения: {passed}")
+    text = "\n".join(lines)
+
+    if not ADMIN_CHAT_IDS:
+        log.info("Оценка %s/5 от %s. ADMIN_CHAT_ID не задан, отправлять некому.", stars, user.id)
+        return
+
+    for chat_id in ADMIN_CHAT_IDS:
+        try:
+            await context.bot.send_message(chat_id=int(chat_id), text=text)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Не смог отправить оценку в %s: %s", chat_id, exc)
 
 
 async def send_route(query, text, map_key, arrived_callback):
@@ -140,6 +209,12 @@ async def send_route(query, text, map_key, arrived_callback):
 # ============================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+
+    # сбрасываем прошлую попытку и засекаем время
+    LAST_QUESTION.pop(chat_id, None)
+    START_TIME[chat_id] = datetime.now()
+
     text = """
 Привет! 👋
 
@@ -162,6 +237,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = """
+Как играть 📖
+
+1. Нажмите /start и кнопку «🟡 В путь по жёлтой дороге».
+2. Бот ведёт от точки к точке: сначала маршрут, потом кнопка «📍 Я на месте».
+3. На каждой точке один вопрос. Отвечайте кнопками.
+4. Ошиблись? Придёт подсказка и вопрос повторится. Можно пробовать сколько угодно.
+5. В конце можно поставить оценку.
+
+Что ещё умею:
+/start или /restart: начать заново с первой точки
+/help: эта памятка
+/id: показать ваш chat_id
+
+Если бот молчит, подождите минуту: бесплатный сервер иногда просыпается.
+"""
+    await update.message.reply_text(text)
+
+
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ответ на обычный текст: подсказываем, что тут только кнопки."""
+    await update.message.reply_text(
+        "Понимаю только кнопки 🙂\n\n"
+        "Выберите вариант в последнем сообщении с вопросом.\n\n"
+        "Начать заново: /start\n"
+        "Памятка: /help"
+    )
+
+
+async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает chat_id: его нужно вписать в ADMIN_CHAT_ID на Render."""
+    await update.message.reply_text(
+        f"Ваш chat_id: {update.effective_chat.id}\n\n"
+        "Скопируйте это число и вставьте в переменную ADMIN_CHAT_ID на Render."
     )
 
 
@@ -304,7 +417,7 @@ async def point3(query):
 По графику 15 минут на перекус.
 
 Можно зайти в «Цех85» на набережной канала Грибоедова,
-65-67 или выбрать любое место рядом.
+65-67 (если открыт) или выбрать любое кафе рядом.
 
 Главное: перекусить, а не переехать сюда жить. 😄
 
@@ -341,7 +454,7 @@ async def go_point4(query):
 Нужный дом:
 Садовая, 55-57.
 
-Пешком около 7 минут.
+Пешком около 10-12 минут.
 
 Нажмите «📍 Я на месте», когда доберётесь.
 """,
@@ -665,12 +778,15 @@ async def point9(query):
 # ============================================================
 
 async def finish(query):
-    text = """
+    passed = elapsed_text(query.message.chat_id)
+    time_line = f"Вы прошли маршрут за {passed}.\n\n" if passed else ""
+
+    text = f"""
 🏁 ФИНИШ
 
 До метро «Адмиралтейская» несколько минут пешком.
 
-Вы нашли жёлтую дорогу, пересчитали углы, сов, мосты и львов,
+{time_line}Вы нашли жёлтую дорогу, пересчитали углы, сов, мосты и львов,
 проверили уровень Нептуна, заглянули к гному
 и раскрыли городскую схему.
 
@@ -728,25 +844,25 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Почти логично, но зелёный здесь город, а не дорожная разметка. Посмотрите под ноги ещё раз."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "grey":
         await query.message.reply_text(
             "Очень по-петербургски, но сегодня город решил удивить. Ищите цвет повеселее."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "house2":
         await query.message.reply_text(
             "Это конец маршрута по двору. Начинать с конца можно, но тогда Элли запутается раньше вас."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "house6":
         await query.message.reply_text(
             "Это середина. Вы почти телепортировались, но сегодня идём без чит-кодов."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "house8":
         await query.message.reply_text(
@@ -780,13 +896,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Три уже трезубец. Не торопитесь: тайные линии и заговоры будут ближе к финалу."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "five_5":
         await query.message.reply_text(
             "Название вас подловило: углы и дороги здесь не совпадают. Считайте не углы, а улицы и проспекты, которые сходятся у башни."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     # -------- Точка 3 --------
 
@@ -800,7 +916,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "metro_spasskaya": "«Спасская» тоже здесь. Возможно, спасает тех, кто слишком долго выбирал перекус.",
         }
         await query.message.reply_text(messages[data])
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "metro_sportivnaya":
         await query.message.reply_text(
@@ -829,13 +945,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Одну сову вы недосчитали. Посмотрите на дом с обеих сторон: они работают посменно, но сегодня все на месте."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "owls4":
         await query.message.reply_text(
             "Четвёртая, возможно, ушла согласовывать перепланировку. Осмотрите оба фасада (по Садовой и по Вознесенскому) и посчитайте ещё раз."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     # -------- Точка 5 --------
 
@@ -859,13 +975,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Вы забыли Пикалов мост. Он скромно лежит под ногами и делает вид, что не участвует."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "bridges8":
         await query.message.reply_text(
             "Восемь, это щедро. Похоже, один мост получил второй голос. Повернитесь ещё раз, но помедленнее."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "bridges_unknown":
         await query.message.reply_text(
@@ -888,13 +1004,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Вы посчитали только одну сторону. Львы работают по обоим берегам. Обойдите мост взглядом ещё раз."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "lions6":
         await query.message.reply_text(
             "Шесть многовато. Это уже расширенный штат охраны. Обойдите мост и посчитайте львов на обоих берегах."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     # -------- Точка 7 --------
 
@@ -911,13 +1027,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Почти: наводнение было огромным, но рекорд устоял. Ищите отметку выше."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "flood1967":
         await query.message.reply_text(
             "В этот раз Нептун действовал скромнее. Посмотрите на самый верх шкалы."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     # -------- Точка 8 --------
 
@@ -940,13 +1056,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Нет, здесь более серьёзная управляющая компания. Присмотритесь к окошку ещё раз."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "two_mice":
         await query.message.reply_text(
             "Мыши решили остаться за кулисами. Присмотритесь ещё раз: один жилец явно сказочный, второй куда более пушистый."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "cross":
         await query.message.reply_text(
@@ -958,13 +1074,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Кораблик будет на Адмиралтействе. Не торопите финал."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "owl":
         await query.message.reply_text(
             "Совы остались на крыше городских учреждений. Эта сопровождает нас мысленно."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     # -------- Точка 9 --------
 
@@ -981,13 +1097,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Невский решил перетянуть всё внимание на себя, но он боковой луч. Центр ищите прямо перед собой."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     elif data == "trident_vos":
         await query.message.reply_text(
             "Вознесенский тоже участвует в заговоре, но держится сбоку. А центральный луч другой."
         )
-        await ask_again(query)
+        await ask_again(query, data)
 
     # -------- ОЦЕНКА --------
 
@@ -1005,19 +1121,79 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "\n\nСпасибо! Ваш ответ поможет сделать маршрут лучше и смешнее."
         )
 
+        await notify_admins(context, query, int(data[-1]))
+
         await query.message.reply_text(
             "До новых городских заговоров! 👋"
         )
+
+
+# Какая кнопка к какому вопросу относится. Нужно, если бота перезапустили
+# и память о последнем вопросе потерялась: вопрос восстановим по нажатию.
+RETRY_BY_DATA = {
+    "yellow": yard_open,
+    "green": yard_open,
+    "grey": yard_open,
+    "house2": yard_closed,
+    "house6": yard_closed,
+    "house8": yard_closed,
+    "house_unknown": yard_closed,
+    "five_3": point2,
+    "five_4": point2,
+    "five_5": point2,
+    "metro_sennaya": point3,
+    "metro_sadovaya": point3,
+    "metro_spasskaya": point3,
+    "metro_sportivnaya": point3,
+    "owls2": point4,
+    "owls3": point4,
+    "owls4": point4,
+    "bridges6": point5,
+    "bridges7": point5,
+    "bridges8": point5,
+    "bridges_unknown": point5,
+    "lions2": point6,
+    "lions4": point6,
+    "lions6": point6,
+    "flood1824": point7,
+    "flood1924": point7,
+    "flood1967": point7,
+    "gnome_cat": door_found,
+    "fairy_dog": door_found,
+    "two_mice": door_found,
+    "cross": door_gone,
+    "ship": door_gone,
+    "owl": door_gone,
+    "trident_nevsky": point9,
+    "trident_goroh": point9,
+    "trident_vos": point9,
+}
 
 
 # ============================================================
 # ЗАПУСК
 # ============================================================
 
+async def post_init(application):
+    """Меню команд в кнопке «/» у клиента Telegram."""
+    await application.bot.set_my_commands([
+        BotCommand("start", "Начать квест заново"),
+        BotCommand("help", "Как играть"),
+        BotCommand("id", "Мой chat_id"),
+    ])
+
+
 def build_telegram_app():
-    application = Application.builder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
+    application = (
+        Application.builder().token(TOKEN).post_init(post_init).build()
+    )
+    application.add_handler(CommandHandler(["start", "restart"], start))
+    application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(CommandHandler("id", whoami))
     application.add_handler(CallbackQueryHandler(callback))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)
+    )
     return application
 
 
