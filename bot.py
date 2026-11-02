@@ -833,7 +833,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "owls4":
         await query.message.reply_text(
-            "Четвёртая, возможно, ушла согласовывать перепланировку. На крыше их три — проверьте оба фасада."
+            "Четвёртая, возможно, ушла согласовывать перепланировку. Осмотрите оба фасада — по Садовой и по Вознесенскому — и посчитайте ещё раз."
         )
         await ask_again(query)
 
