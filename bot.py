@@ -55,7 +55,7 @@ def home():
 @app.route("/health")
 def health():
     # Render дёргает этот адрес для проверки, что сервис жив
-    return "ok", 200
+    return f"ok admin={len(ADMIN_CHAT_IDS)}", 200
 
 
 def run_web():
