@@ -784,7 +784,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "five_5":
         await query.message.reply_text(
-            "Название вас подловило. Углов пять, а улиц и проспектов — четыре. Здесь даже перекрёсток считает с хитрецой."
+            "Название вас подловило: углы и дороги здесь не совпадают. Считайте не углы, а улицы и проспекты, которые сходятся у башни."
         )
         await ask_again(query)
 
@@ -892,7 +892,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "lions6":
         await query.message.reply_text(
-            "Шесть — это уже расширенный штат охраны. На мосту их четыре."
+            "Шесть — это уже расширенный штат охраны. Обойдите мост и посчитайте львов на обоих берегах."
         )
         await ask_again(query)
 
