@@ -278,6 +278,37 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверка, что оценки доходят до админа."""
+    if not ADMIN_CHAT_IDS:
+        await update.message.reply_text(
+            "ADMIN_CHAT_ID не задан, поэтому оценки пока никуда не приходят.\n"
+            "Впишите его в переменные окружения на Render и перезапустите сервис."
+        )
+        return
+
+    sent, failed = [], []
+    for chat_id in ADMIN_CHAT_IDS:
+        try:
+            await context.bot.send_message(
+                chat_id=int(chat_id),
+                text="✅ Проверка связи. Сюда будут приходить оценки квеста.",
+            )
+            sent.append(chat_id)
+        except Exception as exc:  # noqa: BLE001
+            failed.append(f"{chat_id} ({exc})")
+
+    lines = []
+    if sent:
+        lines.append("Отправлено: " + ", ".join(sent))
+    if failed:
+        lines.append("Не получилось: " + ", ".join(failed))
+        lines.append(
+            "Обычно причина в том, что этот аккаунт ещё не нажимал /start у бота."
+        )
+    await update.message.reply_text("\n\n".join(lines))
+
+
 # ============================================================
 # ТОЧКА 1
 # ============================================================
@@ -1190,6 +1221,7 @@ def build_telegram_app():
     application.add_handler(CommandHandler(["start", "restart"], start))
     application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(CommandHandler("id", whoami))
+    application.add_handler(CommandHandler("checkadmin", check_admin))
     application.add_handler(CallbackQueryHandler(callback))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)
