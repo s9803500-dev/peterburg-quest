@@ -255,7 +255,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Что ещё умею:
 /start или /restart: начать заново с первой точки
 /help: эта памятка
-/id: показать ваш chat_id
 
 Если бот молчит, подождите минуту: бесплатный сервер иногда просыпается.
 """
@@ -1212,7 +1211,6 @@ async def post_init(application):
     await application.bot.set_my_commands([
         BotCommand("start", "Начать квест заново"),
         BotCommand("help", "Как играть"),
-        BotCommand("id", "Мой chat_id"),
     ])
 
 
