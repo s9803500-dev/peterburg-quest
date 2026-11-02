@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+import platform
 import threading
 import time
 import urllib.request
@@ -1230,8 +1232,17 @@ def build_telegram_app():
 
 
 def run_bot():
+    # На Python 3.14 asyncio больше не создаёт цикл событий сам,
+    # и python-telegram-bot падает с «There is no current event loop».
+    # Создаём цикл вручную, чтобы работать на любой версии Python.
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     application = build_telegram_app()
-    log.info("Бот запущен, начинаю приём сообщений")
+    log.info("Бот запущен на Python %s, event loop %s", platform.python_version(), loop)
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         # не разгребает старое, если бот лежал: иначе после пробуждения
